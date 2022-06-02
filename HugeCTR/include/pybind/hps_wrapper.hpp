@@ -43,8 +43,7 @@ class HPS {
   HPS(HPS const&) = delete;
   HPS& operator=(HPS const&) = delete;
 
-  pybind11::array_t<float> lookup(pybind11::array_t<size_t>& h_keys, const std::string& model_name,
-                                  size_t table_id);
+  void lookup(pybind11::array_t<size_t>& h_keys, const std::string& model_name,size_t table_id,int target_address );
 
  private:
   void initialize();
@@ -126,8 +125,8 @@ void HPS::initialize() {
   }
 }
 
-pybind11::array_t<float> HPS::lookup(pybind11::array_t<size_t>& h_keys,
-                                     const std::string& model_name, size_t table_id) {
+    
+void HPS::lookup(pybind11::array_t<size_t>& h_keys, const std::string& model_name,size_t table_id, int target_address) {
   if (lookup_session_map_.find(model_name) == lookup_session_map_.end()) {
     HCTR_OWN_THROW(Error_t::WrongInput, "The model name does not exist in HPS.");
   }
@@ -163,16 +162,10 @@ pybind11::array_t<float> HPS::lookup(pybind11::array_t<size_t>& h_keys,
   const auto& lookup_session = lookup_session_map_.find(model_name)->second.begin()->second;
   auto& d_vectors_per_table = d_vectors_per_table_map_.find(model_name)->second.begin()->second;
   lookup_session->lookup(key_ptr, d_vectors_per_table[table_id], num_keys, table_id);
-
-  std::vector<size_t> vector_shape{static_cast<size_t>(key_buf.shape[0]),
-                                   embedding_size_per_table[table_id]};
-  pybind11::array_t<float> h_vectors(vector_shape);
-  pybind11::buffer_info vector_buf = h_vectors.request();
-  float* vec_ptr = static_cast<float*>(vector_buf.ptr);
-  HCTR_LIB_THROW(cudaMemcpy(vec_ptr, d_vectors_per_table[table_id],
-                            num_keys * embedding_size_per_table[table_id] * sizeof(float),
-                            cudaMemcpyDeviceToHost));
-  return h_vectors;
+  // hard coding
+    int *tensor_address = reinterpret_cast<int*>(target_address);
+    cudaMemcpyPeer(tensor_address, 0, d_vectors_per_table[table_id], 0,
+                 num_keys * embedding_size_per_table[table_id] * sizeof(float));
 }
 
 void HPSPybind(pybind11::module& m) {
@@ -198,7 +191,7 @@ void HPSPybind(pybind11::module& m) {
       .def(pybind11::init<parameter_server_config&>(), pybind11::arg("ps_config"))
       .def(pybind11::init<const std::string&>(), pybind11::arg("hps_json_config_file"))
       .def("lookup", &HugeCTR::python_lib::HPS::lookup, pybind11::arg("h_keys"),
-           pybind11::arg("model_name"), pybind11::arg("table_id"));
+           pybind11::arg("model_name"), pybind11::arg("table_id"),pybind11::arg("target_address"));
 }
 
 }  // namespace python_lib
