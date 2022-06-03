@@ -44,7 +44,7 @@ class HPS {
   HPS& operator=(HPS const&) = delete;
 
   void lookup(pybind11::array_t<size_t>& h_keys, const std::string& model_name, size_t table_id,
-              uint64_t target_address);
+              uint64_t target_address64);
 
  private:
   void initialize();
@@ -127,7 +127,7 @@ void HPS::initialize() {
 }
 
 void HPS::lookup(pybind11::array_t<size_t>& h_keys, const std::string& model_name, size_t table_id,
-                 uint64_t target_address) {
+                 uint64_t target_address64) {
   if (lookup_session_map_.find(model_name) == lookup_session_map_.end()) {
     HCTR_OWN_THROW(Error_t::WrongInput, "The model name does not exist in HPS.");
   }
@@ -164,11 +164,12 @@ void HPS::lookup(pybind11::array_t<size_t>& h_keys, const std::string& model_nam
   auto& d_vectors_per_table = d_vectors_per_table_map_.find(model_name)->second.begin()->second;
   lookup_session->lookup(key_ptr, d_vectors_per_table[table_id], num_keys, table_id);
   // hard coding
-  uint64_t* tensor_address = reinterpret_cast<uint64_t*>(target_address);
-  cudaMemcpyPeer(&tensor_address, 0, d_vectors_per_table[table_id], 0,
-                 num_keys * embedding_size_per_table[table_id] * sizeof(float));
+  uint64_t* tensor_address = reinterpret_cast<uint64_t*>(target_address64);
+  cudaError_t err = cudaMemcpyAsync(tensor_address, d_vectors_per_table[table_id],
+                 num_keys * embedding_size_per_table[table_id] * sizeof(float),cudaMemcpyDeviceToDevice);
+   HCTR_CHECK_HINT(err == cudaSuccess, (std::string("Memcopy failed ") + std::to_string(err) + std::string("  ") + std::string(cudaGetErrorString(err))).c_str());
 }
-
+    
 void HPSPybind(pybind11::module& m) {
   pybind11::module infer = m.def_submodule("inference", "inference submodule of hugectr");
 
@@ -192,7 +193,8 @@ void HPSPybind(pybind11::module& m) {
       .def(pybind11::init<parameter_server_config&>(), pybind11::arg("ps_config"))
       .def(pybind11::init<const std::string&>(), pybind11::arg("hps_json_config_file"))
       .def("lookup", &HugeCTR::python_lib::HPS::lookup, pybind11::arg("h_keys"),
-           pybind11::arg("model_name"), pybind11::arg("table_id"), pybind11::arg("target_address"));
+           pybind11::arg("model_name"), pybind11::arg("table_id"),
+           pybind11::arg("target_address64"));
 }
 
 }  // namespace python_lib
