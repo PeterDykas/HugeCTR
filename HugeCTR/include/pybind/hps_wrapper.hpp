@@ -133,7 +133,9 @@ void HPS::lookup(pybind11::array_t<size_t>& h_keys, const std::string& model_nam
   }
   const auto& max_keys_per_sample_per_table =
       ps_config_.max_feature_num_per_sample_per_emb_table_.at(model_name);
-  const auto& embedding_size_per_table = ps_config_.embedding_vec_size_.at(model_name);
+
+  // Embedding
+  // const auto& embedding_size_per_table = ps_config_.embedding_vec_size_.at(model_name);
   const auto& inference_params =
       parameter_server_->get_hps_model_configuration_map().at(model_name);
   pybind11::buffer_info key_buf = h_keys.request();
@@ -161,15 +163,22 @@ void HPS::lookup(pybind11::array_t<size_t>& h_keys, const std::string& model_nam
 
   // TODO: batching or scheduling for lookup sessions on multiple GPUs
   const auto& lookup_session = lookup_session_map_.find(model_name)->second.begin()->second;
-  auto& d_vectors_per_table = d_vectors_per_table_map_.find(model_name)->second.begin()->second;
-  lookup_session->lookup(key_ptr, d_vectors_per_table[table_id], num_keys, table_id);
+  // auto& d_vectors_per_table = d_vectors_per_table_map_.find(model_name)->second.begin()->second;
+
+  float* tensor_address = reinterpret_cast<float*>(target_address64);
+  lookup_session->lookup(key_ptr, tensor_address, num_keys, table_id);
+
   // hard coding
-  uint64_t* tensor_address = reinterpret_cast<uint64_t*>(target_address64);
-  cudaError_t err = cudaMemcpyAsync(tensor_address, d_vectors_per_table[table_id],
-                 num_keys * embedding_size_per_table[table_id] * sizeof(float),cudaMemcpyDeviceToDevice);
-   HCTR_CHECK_HINT(err == cudaSuccess, (std::string("Memcopy failed ") + std::to_string(err) + std::string("  ") + std::string(cudaGetErrorString(err))).c_str());
+
+  //   cudaError_t err = cudaMemcpyAsync(tensor_address, d_vectors_per_table[table_id],
+  //                                     num_keys * embedding_size_per_table[table_id] *
+  //                                     sizeof(float), cudaMemcpyDeviceToDevice);
+  //   HCTR_CHECK_HINT(err == cudaSuccess, (std::string("Memcopy failed ") + std::to_string(err) +
+  //                                        std::string("  ") +
+  //                                        std::string(cudaGetErrorString(err)))
+  //                                           .c_str());
 }
-    
+
 void HPSPybind(pybind11::module& m) {
   pybind11::module infer = m.def_submodule("inference", "inference submodule of hugectr");
 
