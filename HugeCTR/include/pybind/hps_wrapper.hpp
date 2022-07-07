@@ -44,7 +44,7 @@ class HPS {
   HPS& operator=(HPS const&) = delete;
 
   void lookup(pybind11::array_t<size_t>& h_keys, const std::string& model_name, size_t table_id,
-              uint64_t target_address64);
+              uint64_t target_address64, int64_t device_id);
 
  private:
   void initialize();
@@ -127,7 +127,7 @@ void HPS::initialize() {
 }
 
 void HPS::lookup(pybind11::array_t<size_t>& h_keys, const std::string& model_name, size_t table_id,
-                 uint64_t target_address64) {
+                 uint64_t target_address64, int64_t device_id) {
   if (lookup_session_map_.find(model_name) == lookup_session_map_.end()) {
     HCTR_OWN_THROW(Error_t::WrongInput, "The model name does not exist in HPS.");
   }
@@ -162,7 +162,7 @@ void HPS::lookup(pybind11::array_t<size_t>& h_keys, const std::string& model_nam
   }
 
   // TODO: batching or scheduling for lookup sessions on multiple GPUs
-  const auto& lookup_session = lookup_session_map_.find(model_name)->second.begin()->second;
+  const auto& lookup_session = lookup_session_map_.find(model_name)->second.find(device_id)->second;
   // auto& d_vectors_per_table = d_vectors_per_table_map_.find(model_name)->second.begin()->second;
 
   float* tensor_address = reinterpret_cast<float*>(target_address64);
@@ -203,7 +203,7 @@ void HPSPybind(pybind11::module& m) {
       .def(pybind11::init<const std::string&>(), pybind11::arg("hps_json_config_file"))
       .def("lookup", &HugeCTR::python_lib::HPS::lookup, pybind11::arg("h_keys"),
            pybind11::arg("model_name"), pybind11::arg("table_id"),
-           pybind11::arg("target_address64"));
+           pybind11::arg("target_address64"), pybind11::arg("device_id"));
 }
 
 }  // namespace python_lib
