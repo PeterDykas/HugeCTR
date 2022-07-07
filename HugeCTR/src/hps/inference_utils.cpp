@@ -356,7 +356,7 @@ parameter_server_config::parameter_server_config(const std::string& hps_json_con
     std::string dense_file = get_value_from_json_soft<std::string>(model, "dense_file", "");
 
     // [7] device_id -> int
-    const int device_id = 0;
+    const int device_id = get_value_from_json_soft<int>(model, "device_id,", 0);
 
     InferenceParams params(model_name, max_batch_size, hit_rate_threshold, dense_file, sparse_files,
                            device_id, use_gpu_embedding_cache, cache_size_percentage, true);
