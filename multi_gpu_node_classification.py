@@ -12,7 +12,7 @@ import numpy as np
 from ogb.nodeproppred import DglNodePropPredDataset
 import tqdm
 import torch.multiprocessing as mp
-
+import argparse
 
 
 class SAGE(nn.Module):
@@ -93,7 +93,7 @@ class SAGE(nn.Module):
         return y
 
 
-def train(rank, world_size, graph, num_classes, split_idx):
+def train(rank, world_size, graph, num_classes, split_idx, args):
     device = torch.device(f'cuda:{rank}')
     torch.cuda.set_device(device)
     dist.init_process_group('nccl', 'tcp://127.0.0.1:12347', world_size=world_size, rank=rank)
@@ -107,27 +107,32 @@ def train(rank, world_size, graph, num_classes, split_idx):
             
     #feat_len = graph.ndata['feat'].shape[1]
     # move ids to GPU
-    #train_idx = train_idx.to(device)
-    #valid_idx = valid_idx.to(device)
-    #test_idx = test_idx.to(device)
+    if args.use_uva:
+        # move ids to GPU
+        train_idx = train_idx.to('cuda')
+        valid_idx = valid_idx.to('cuda')
+        test_idx = test_idx.to('cuda')
+        num_workers = 0
+    
+    if args.use_hps:
+        feat_len, hps = setup_hps(graph,rank)
 
     # For training, each process/GPU will get a subset of the
     # train_idx/valid_idx, and generate mini-batches indepednetly. This allows
     # the only communication neccessary in training to be the all-reduce for
     # the gradients performed by the DDP wrapper (created above).
     sampler = dgl.dataloading.NeighborSampler([15, 10, 5],
-        prefetch_node_feats=None,
+        prefetch_node_feats= None if args.use_hps else ['feat'],
         prefetch_labels=['label'])
     train_dataloader = dgl.dataloading.DataLoader(
             graph, train_idx, sampler, batch_size=1024, shuffle=True,
-            device=None,
-            drop_last=False,use_ddp=True, num_workers=num_workers, use_uva=False)
+            device=device if not args.use_hps else None,
+            drop_last=False,use_ddp=True, num_workers=num_workers, use_uva=args.use_uva)
     valid_dataloader = dgl.dataloading.DataLoader(
             graph, valid_idx, sampler, batch_size=1024, shuffle=True,
-            device=None,
-            drop_last=False,use_ddp=True, num_workers=num_workers, use_uva=False)
+            device=device if not args.use_hps else None,
+            drop_last=False,use_ddp=True, num_workers=num_workers, use_uva=args.use_uva)
 
-    feat_len, hps = setup_hps(graph,rank)
 
     durations = []
     for _ in range(10):
@@ -135,9 +140,13 @@ def train(rank, world_size, graph, num_classes, split_idx):
         t0 = time.time()
         for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
             #x = blocks[0].srcdata['feat']
-            x = torch.zeros(input_nodes.shape[0], feat_len, device=device)
-            hps.lookup(input_nodes, "ogbn_products", 0, x.data_ptr(),rank)
-            blocks = [blk.to(device) for blk in blocks]
+            if args.use_hps:
+                x = torch.zeros(input_nodes.shape[0], feat_len, device=device)
+                hps.lookup(input_nodes, "ogbn_products", 0, x.data_ptr(),rank)
+                blocks = [blk.to(device) for blk in blocks]
+            else:
+                blocks = [blk.to(device) for blk in blocks]
+                x = blocks[0].srcdata['feat']
 
             y = blocks[-1].dstdata['label'][:, 0]
             y_hat = model(blocks, x)
@@ -191,6 +200,7 @@ def setup_hps(graph,rank):
 
     nids = np.arange(0, graph.num_nodes(), dtype=np.ulonglong)
     feat = graph.ndata.pop('feat').numpy()
+    print(feat.shape)
 
     nids.tofile("products/key", sep="")
     feat.tofile("products/emb_vector", sep="")
@@ -248,6 +258,14 @@ def setup_hps(graph,rank):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='GraphSAGE for node classification with sampling')
+
+    parser.add_argument("--use-uva", action='store_true',
+                        help="Whether use UVA for acceleration.")
+    parser.add_argument("--use-hps", action='store_true',
+                        help="Whether use HPS for acceleration.")
+    args = parser.parse_args()
+    
     dataset = DglNodePropPredDataset('ogbn-products')
     graph, labels = dataset[0]
     graph.ndata['label'] = labels
@@ -259,4 +277,4 @@ if __name__ == '__main__':
     n_procs = torch.cuda.device_count()
     
     mp.set_start_method('spawn')
-    mp.spawn(train, args=(n_procs, graph, num_classes, split_idx), nprocs=n_procs)
+    mp.spawn(train, args=(n_procs, graph, num_classes, split_idx, args), nprocs=n_procs)
